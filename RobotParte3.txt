@@ -1,0 +1,154 @@
+import pygame
+import math
+import numpy as np
+
+def distance(x,y):
+    return np.linalg.norm(np.array(x)-np.array(y))
+
+class Robot:
+    def __init__(self, startPos, width):
+        self.m2p = 3779.52 # meters to pixels
+        self.w = width
+        self.x = startPos[0]
+        self.y = startPos[1]
+        self.theta = 0
+        self.direction = np.array([-0.00001,1])
+
+        self.v = 0.008*self.m2p # metros/s
+        self.minSpeed = 0.02*self.m2p
+        self.min_obs_dist = 80 # pixeles
+
+    def avoid_obstacles(self, point_cloud):
+        closest_obs = None
+        dist = np.inf
+
+        if len(point_cloud) > 1:
+            for point in point_cloud:
+                if dist > distance([self.x, self.y], point):
+                    dist = distance([self.x, self.y], point)
+                    closest_obs = dist
+
+            if closest_obs < self.min_obs_dist:
+                #print(f"point cloud:{point_cloud} ")
+                self.obstacles = np.sum(np.array(point_cloud), axis = 0)/len(point_cloud)
+                self.direction = -(self.obstacles - np.array([self.x, self.y]))
+                #print(self.direction)
+                self.theta = np.arctan(abs(self.direction[1]/self.direction[0]))*180/np.pi
+                #print(self.theta)
+    
+    def kinematics(self, dt):
+        self.x += (self.direction[0]/abs(self.direction[0]))*(self.v)*math.cos(math.radians(self.theta))*dt
+        #print(math.cos(math.radians(self.theta)))
+        #print(self.v)
+        #print(self.theta)
+        #print(dt)
+        #print((self.direction[0]/abs(self.direction[0]))*(self.v)*math.cos(self.theta)*dt)
+        self.y += (self.direction[1]/abs(self.direction[1]))*(self.v)*math.sin(math.radians(self.theta))*dt
+        #print(f"pos x: {self.x}, pos y: {self.y} ")
+        #self.v = max(min(self.maxSpeed, self.v), self.minSpeed)
+        self.v = self.minSpeed
+
+
+class Ground:
+    def __init__(self, dimentions, robot_img, map_img):
+        pygame.init()
+
+        # terreno
+        self.robot = pygame.image.load(robot_img)
+        self.map_img = pygame.image.load(map_img)
+
+        # dimensiones
+        self.height, self.width = dimentions
+
+        # configuración de la ventana
+        pygame.display.set_caption("Map")
+        self.map = pygame.display.set_mode((self.width, self.height))
+        self.map.blit(self.map_img, (0,0))
+
+    def draw_robot(self, x, y, theta):
+        rotated = pygame.transform.rotozoom(self.robot, math.degrees(0), 1)
+        rect = rotated.get_rect(center = (x,y))
+        self.map.blit(rotated, rect)
+
+    def draw_sensor_data(self, point_cloud):
+        for point in point_cloud:
+            pygame.draw.circle(self.map, (0,255,0), point, 3, 0)
+
+class Sensor:
+    def __init__(self, sensor_range, py_map):
+        self.sensor_range = sensor_range
+        self.map_width, self.map_height = pygame.display.get_surface().get_size()
+        self.map = py_map
+
+    def sense_obstacles(self, x, y, pos, sensor_angle):
+        obstacles = []
+        x1, y1 = x+pos[0]*np.cos(math.radians(sensor_angle)), y+pos[1]*np.sin(math.radians(sensor_angle))
+        start_angle = math.radians(sensor_angle) - self.sensor_range[1]
+        end_angle = math.radians(sensor_angle) + self.sensor_range[1]
+        for angle in np.linspace(start_angle, end_angle, 100, False):
+            x2 = x1 + self.sensor_range[0] * math.cos(angle)
+            y2 = y1 - self.sensor_range[0] * math.sin(angle)
+            for i in range(0,100):
+                u = i / 100
+                x = int(x2*u + x1*(1-u))
+                y = int(y2*u + y1*(1-u))
+                if 0 < x < self.map_width and 0 < y < self.map_height:
+                    color = self.map.get_at((x,y))
+                    self.map.set_at((x,y), (255,0, 0))
+                    if (color[0], color[1], color[2]) == (0,0,0):
+                        obstacles.append([x,y])
+                        break
+                        
+        return obstacles
+
+
+
+import math
+import pygame
+from robot import Ground
+import numpy as np
+from robot import *
+
+MAP_DIMENSIONS = (600,1200)
+
+gnd = Ground(MAP_DIMENSIONS, "robott.png", "map2.png") #robott, map2
+#n_robots = 1
+#robot_position = np.random.rand(n_robots,2)*550
+
+
+# robot
+robot_position = (700,350)
+robot = Robot(robot_position, 0.01*3779.52)
+
+sensor_range = 250, math.radians(20) #20
+sensor1 = Sensor(sensor_range, gnd.map)
+sensor2 = Sensor(sensor_range, gnd.map)
+sensor3 = Sensor(sensor_range, gnd.map)
+
+dt = 0
+last_time = pygame.time.get_ticks()
+
+running = True
+n = 8000
+while running:
+    for event in pygame.event.get():
+        if event.type == pygame.QUIT:
+            running = False
+
+    dt = (pygame.time.get_ticks()-last_time)/1000
+    last_time = pygame.time.get_ticks()
+
+    gnd.map.blit(gnd.map_img, (0,0))
+
+    robot.kinematics(dt)
+    gnd.draw_robot(robot.x, robot.y, robot.theta)
+    point_cloud1 = sensor1.sense_obstacles(robot.x, robot.y, (15,-10), 150)
+    point_cloud2 = sensor2.sense_obstacles(robot.x, robot.y, (20,-12), 30)
+    point_cloud3 = sensor3.sense_obstacles(robot.x, robot.y, (20,-20), 270)
+    point_cloud = point_cloud3 + point_cloud2 + point_cloud1
+    robot.avoid_obstacles(point_cloud)
+    gnd.draw_sensor_data(point_cloud)
+    pygame.display.update()
+
+   # n -= 1
+    
